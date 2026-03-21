@@ -1,75 +1,84 @@
-import math
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
 
 from scheduler import Scheduler
 
-def get_overdue_set(current_week, past_weeks):
-    """Return set of (room_name, task_name) that are overdue in the current week.
+def get_display_sets(current_day, all_past_days, ref_date):
+    """Return three sets of (room_name, task_name) tuples based on ref_date.
 
-    A task is overdue for a given room when more than one full repeat-cycle
-    (measured in whole calendar weeks) has elapsed since it was last done there.
-    Example: repeat=7 → due every week → overdue if not done for 2+ weeks.
-    If it was done in the immediately preceding cycle it is NOT overdue.
+    This function now works with a single day and checks all past days for task completions.
+
+    - display_done : done on current_day
+    - locked       : done on a past day and still within its repeat interval
+    - overdue      : last completion was >= 2 × repeat days ago (not done in last interval)
+
+    Intervals are measured in days from the last completion date.
+    When a new interval begins (days_since >= repeat), the task becomes unlocked/pending again.
     """
-    now = datetime.now()
-    overdue = set()
-    now_monday = (now - timedelta(days=now.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    for room_name, room in current_week.rooms.items():
-        for task in room.tasks:
-            if task.doneBy:
-                continue
-            last_done = None
-            for pw in past_weeks.values():
-                past_room = pw.rooms.get(room_name)
-                if not past_room:
-                    continue
-                past_task = next((t for t in past_room.tasks if t.name == task.name), None)
-                if past_task and past_task.doneWhen:
-                    if last_done is None or past_task.doneWhen > last_done:
-                        last_done = past_task.doneWhen
-            if last_done is not None:
-                weeks_required = math.ceil(task.repeat / 7)
-                last_done_monday = (last_done - timedelta(days=last_done.weekday())).replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                weeks_elapsed = (now_monday - last_done_monday).days // 7
-                if weeks_elapsed > weeks_required:
-                    overdue.add((room_name, task.name))
-    return overdue
-
-
-def get_locked_set(current_week, past_weeks):
-    """Return set of (room_name, task_name) where the task was recently completed within its repeat window."""
-    now = datetime.now()
+    ref = ref_date if isinstance(ref_date, date) else ref_date.date()
+    display_done = set()
     locked = set()
-    # Monday of the current ISO week
-    now_monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    for room_name, room in current_week.rooms.items():
+    overdue = set()
+
+    # Process tasks from current day
+    for room_name, room in current_day.rooms.items():
         for task in room.tasks:
-            if task.doneBy:
-                continue
             last_done = None
-            for pw in past_weeks.values():
-                past_room = pw.rooms.get(room_name)
+            is_current_day = False
+
+            # Current day's completion — only if it happened on or before ref_date
+            if task.doneBy and task.doneWhen:
+                done_date = task.doneWhen.date() if hasattr(task.doneWhen, 'date') else task.doneWhen
+                if done_date <= ref:
+                    last_done = task.doneWhen
+                    is_current_day = True
+
+            # Check all past days for this task
+            for past_day in all_past_days:
+                if past_day.date and past_day.date > ref:
+                    continue
+                past_room = past_day.rooms.get(room_name)
                 if not past_room:
                     continue
                 past_task = next((t for t in past_room.tasks if t.name == task.name), None)
                 if past_task and past_task.doneWhen:
-                    if last_done is None or past_task.doneWhen > last_done:
-                        last_done = past_task.doneWhen
-            if last_done is not None:
-                # Compare in whole weeks so that a 7-day task done anywhere in the
-                # previous calendar week is available again in the current week.
-                weeks_required = math.ceil(task.repeat / 7)
-                last_done_monday = (last_done - timedelta(days=last_done.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-                weeks_elapsed = (now_monday - last_done_monday).days // 7
-                if weeks_elapsed < weeks_required:
+                    past_done_date = past_task.doneWhen.date() if hasattr(past_task.doneWhen, 'date') else past_task.doneWhen
+                    if past_done_date <= ref:
+                        if last_done is None or past_task.doneWhen > last_done:
+                            last_done = past_task.doneWhen
+                            is_current_day = False
+
+            if last_done is None:
+                continue  # never done → pending, no special styling
+
+            last_done_date = last_done.date() if hasattr(last_done, 'date') else last_done
+            days_since = (ref - last_done_date).days
+            
+            # Day-based interval logic:
+            # - Within interval (days_since < repeat): locked or display_done
+            # - New interval started (repeat <= days_since < 2×repeat): unlocked (pending)
+            # - Not done in last interval (days_since >= 2×repeat): overdue
+            
+            # Debug logging
+            from src.setup.config import Config
+            if Config().get_debug_mode():
+                print(f"[DEBUG] Task '{task.name}' in '{room_name}': days_since={days_since}, repeat={task.repeat}, is_current_day={is_current_day}, ref={ref}, last_done_date={last_done_date}")
+            
+            if days_since < task.repeat:
+                # If done on current day, always show as display_done
+                if is_current_day:
+                    display_done.add((room_name, task.name))
+                else:
+                    # Still within the interval, keep it locked
                     locked.add((room_name, task.name))
-    return locked
+            elif days_since >= task.repeat * 2:
+                # At least one full interval has passed without completion → overdue
+                overdue.add((room_name, task.name))
+            # else: task.repeat <= days_since < task.repeat * 2
+            #       New interval has started, task is due but not yet overdue → plain pending
+
+    return display_done, locked, overdue
 
 
 TRANSLATIONS = {
@@ -88,15 +97,20 @@ TRANSLATIONS = {
         "weeks": "Wochen",
         "all_done_undo": "✓ Alle erledigt — Rückgängig",
         "date_format": "%d.%m.%Y %H:%M",
+        "date_only_format": "%d.%m.%Y",
         "nav_prev": "← Vorherige Woche",
         "nav_next": "Nächste Woche →",
         "nav_next_current": "Aktuelle Woche →",
         "nav_to_current": "Zur aktuellen Woche",
         "readonly_notice": "Vergangene Woche — Nur Ansicht",
+        "readonly_past_day": "Vergangener Tag",
+        "readonly_view_only": "Nur Ansicht",
+        "goto_today": "Zu Heute",
         "overdue_label": "Überfällig",
         "locked_label": "Kürzlich erledigt",
         "progress_label": "erledigt",
         "total_progress_label": "Aufgaben diese Woche erledigt",
+        "day_names": ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
     },
     "en": {
         "page_title": "Household Plan",
@@ -113,15 +127,20 @@ TRANSLATIONS = {
         "weeks": "weeks",
         "all_done_undo": "✓ All done — Undo",
         "date_format": "%m/%d/%Y %H:%M",
+        "date_only_format": "%m/%d/%Y",
         "nav_prev": "← Previous Week",
         "nav_next": "Next Week →",
         "nav_next_current": "Current Week →",
         "nav_to_current": "Go to current week",
         "readonly_notice": "Past Week — Read Only",
+        "readonly_past_day": "Past Day",
+        "readonly_view_only": "View Only",
+        "goto_today": "Go to Today",
         "overdue_label": "Overdue",
         "locked_label": "Recently done",
         "progress_label": "done",
         "total_progress_label": "tasks done this week",
+        "day_names": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     },
 }
 
@@ -129,49 +148,120 @@ TRANSLATIONS = {
 def create_app(scheduler):
     app = Flask(__name__, template_folder="frontend")
 
+    @app.after_request
+    def add_header(response):
+        """Add cache control headers to prevent browser caching."""
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
     @app.route("/")
     def home():
-        week = scheduler.get_current_week()
+        """Show today's tasks by default."""
+        today = datetime.now().date()
+        return show_day(today, is_current=True)
+    
+    @app.route("/day/<int:year>/<int:month>/<int:day_of_month>")
+    def day_view(year, month, day_of_month):
+        """Show a specific day's tasks."""
+        try:
+            target_date = date(year, month, day_of_month)
+        except ValueError:
+            return "Invalid date", 404
+        
+        today = datetime.now().date()
+        is_current = target_date == today
+        return show_day(target_date, is_current=is_current)
+    
+    def show_day(target_date, is_current=False):
+        """Display tasks for a specific day."""
+        today = datetime.now().date()
+        readonly = target_date < today
+        
+        # Get the day object for the target date
+        current_day = scheduler.get_day(target_date)
+        if current_day is None:
+            return "Day not found", 404
+        
+        # Get week info for the target date
+        week = scheduler.get_week_for_date(target_date)
+        if week is None:
+            return "Week not found", 404
+        
+        # Collect all past days for interval calculations
+        all_past_days = []
         past_weeks = scheduler.get_past_week()
+        for pw in past_weeks.values():
+            for day in pw.days:
+                if day.date and day.date < target_date:
+                    all_past_days.append(day)
+        
+        # Also include previous days from the same week (whether current or past)
+        for day in week.days:
+            if day.date and day.date < target_date:
+                all_past_days.append(day)
+        
+        # Calculate display sets
+        display_done, locked, overdue = get_display_sets(current_day, all_past_days, target_date)
+        
         users = scheduler._config.get_users()
         lang = scheduler._config.get_language_key().value
         t = TRANSLATIONS[lang]
-        overdue = get_overdue_set(week, past_weeks)
-        locked = get_locked_set(week, past_weeks)
-        sorted_keys = sorted(past_weeks.keys())
-        prev_week = sorted_keys[-1] if sorted_keys else None
+        
+        # Calculate week days for navigation
+        monday = target_date - timedelta(days=target_date.weekday())
+        week_days = [monday + timedelta(days=i) for i in range(7)]
+        
+        # Check if this is a past week (Sunday of the week is before today)
+        sunday = monday + timedelta(days=6)
+        is_past_week = sunday < today
+        
+        # Find previous and next weeks (same weekday)
+        prev_week_day = target_date - timedelta(days=7)
+        next_week_day = target_date + timedelta(days=7)
+        
+        # Check if we can navigate to next week
+        next_week_monday = next_week_day - timedelta(days=next_week_day.weekday())
+        can_go_next_week = next_week_monday <= today
+        next_is_current_week = next_week_monday <= today <= (next_week_monday + timedelta(days=6))
+        
         return render_template(
             "index.html",
-            week=week, users=users, lang=lang, t=t,
-            readonly=False, overdue=overdue, locked=locked,
-            prev_week=prev_week, next_week=None, next_is_current=False,
-            is_current=True,
+            day=current_day,
+            week=week,
+            users=users,
+            lang=lang,
+            t=t,
+            readonly=readonly,
+            overdue=overdue,
+            locked=locked,
+            display_done=display_done,
+            selected_day=target_date,
+            today=today,
+            week_days=week_days,
+            prev_week_day=prev_week_day,
+            next_week_day=next_week_day if can_go_next_week else None,
+            next_is_current_week=next_is_current_week,
+            is_current=is_current,
+            is_past_week=is_past_week,
+            debug_mode=scheduler.get_debug_mode(),
         )
 
     @app.route("/week/<int:year>/<int:week_no>")
     def past_week_view(year, week_no):
+        """View a past week - shows the Monday of that week."""
         past_weeks = scheduler.get_past_week()
         week = past_weeks.get((year, week_no))
         if not week:
             return "Week not found", 404
-        users = scheduler._config.get_users()
-        lang = scheduler._config.get_language_key().value
-        t = TRANSLATIONS[lang]
-        sorted_keys = sorted(past_weeks.keys())
-        try:
-            idx = sorted_keys.index((year, week_no))
-        except ValueError:
-            return "Week not found", 404
-        prev_week = sorted_keys[idx - 1] if idx > 0 else None
-        next_week = sorted_keys[idx + 1] if idx + 1 < len(sorted_keys) else None
-        next_is_current = next_week is None
-        return render_template(
-            "index.html",
-            week=week, users=users, lang=lang, t=t,
-            readonly=True, overdue=set(), locked=set(),
-            prev_week=prev_week, next_week=next_week, next_is_current=next_is_current,
-            is_current=False,
-        )
+        
+        # Show the Monday of the past week
+        monday = week.days[0]
+        if monday.date:
+            return show_day(monday.date, is_current=False)
+        else:
+            return "Week date not found", 404
 
     @app.route("/api/task/complete", methods=["POST"])
     def complete_task():
@@ -179,12 +269,21 @@ def create_app(scheduler):
         room_name = data.get("room", "").strip()
         task_name = data.get("task", "").strip()
         done_by = data.get("doneBy", "").strip()
+        day_date_str = data.get("dayDate")  # Expected format: "YYYY-MM-DD"
 
-        if not room_name or not task_name or not done_by:
+        if not room_name or not task_name or not done_by or not day_date_str:
             return jsonify({"error": "Missing required fields"}), 400
 
-        week = scheduler.get_current_week()
-        room = week.rooms.get(room_name)
+        try:
+            day_date = datetime.strptime(day_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format"}), 400
+
+        day = scheduler.get_day(day_date)
+        if not day:
+            return jsonify({"error": "Day not found"}), 404
+        
+        room = day.rooms.get(room_name)
         if not room:
             return jsonify({"error": "Room not found"}), 404
 
@@ -206,12 +305,21 @@ def create_app(scheduler):
         data = request.get_json(silent=True) or {}
         room_name = data.get("room", "").strip()
         task_name = data.get("task", "").strip()
+        day_date_str = data.get("dayDate")  # Expected format: "YYYY-MM-DD"
 
-        if not room_name or not task_name:
+        if not room_name or not task_name or not day_date_str:
             return jsonify({"error": "Missing required fields"}), 400
 
-        week = scheduler.get_current_week()
-        room = week.rooms.get(room_name)
+        try:
+            day_date = datetime.strptime(day_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format"}), 400
+
+        day = scheduler.get_day(day_date)
+        if not day:
+            return jsonify({"error": "Day not found"}), 404
+        
+        room = day.rooms.get(room_name)
         if not room:
             return jsonify({"error": "Room not found"}), 404
 

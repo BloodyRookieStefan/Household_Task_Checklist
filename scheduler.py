@@ -1,6 +1,5 @@
 import src
 import copy
-import random
 
 from datetime import datetime, timedelta
 
@@ -15,6 +14,10 @@ class Scheduler:
 
         if self._config.get_debug_mode():
             self.create_debug_weeks()
+    
+    def get_debug_mode(self) -> bool:
+        ''' Get the debug mode status. '''
+        return self._config.get_debug_mode()
 
     def get_current_week(self) -> src.week.Week:
         ''' Get the current week. '''
@@ -32,31 +35,51 @@ class Scheduler:
             if len(self._pastWeeks) > 40:       # Store max 40 weeks
                 self._pastWeeks.pop(min(self._pastWeeks.keys()))
         iso = datetime.now().isocalendar()
-        self._currentWeek = src.week.Week(iso.week, iso.year, self._config.get_rooms())
+        monday = datetime.now().date() - timedelta(days=datetime.now().weekday())
+        self._currentWeek = src.week.Week(iso.week, iso.year, self._config.get_rooms(), monday)
+    
+    def get_day(self, target_date):
+        """Get the Day object for a specific date."""
+        iso = target_date.isocalendar()
+        
+        # Check if the date is in the current week
+        if iso.year == self._currentWeek.year and iso.week == self._currentWeek.weekNumber:
+            day_index = target_date.weekday()  # 0=Monday, 6=Sunday
+            return self._currentWeek.days[day_index]
+        
+        # Check if the date is in a past week
+        week_key = (iso.year, iso.week)
+        if week_key in self._pastWeeks:
+            past_week = self._pastWeeks[week_key]
+            day_index = target_date.weekday()
+            return past_week.days[day_index]
+        
+        return None
+    
+    def get_week_for_date(self, target_date):
+        """Get the Week object for a specific date."""
+        iso = target_date.isocalendar()
+        
+        # Check if the date is in the current week
+        if iso.year == self._currentWeek.year and iso.week == self._currentWeek.weekNumber:
+            return self._currentWeek
+        
+        # Check if the date is in a past week
+        week_key = (iso.year, iso.week)
+        if week_key in self._pastWeeks:
+            return self._pastWeeks[week_key]
+        
+        return None
 
 
     def create_debug_weeks(self):
-        ''' Create 5 debug weeks in the past with randomly completed tasks. '''
-        users = self._config.get_users()
+        ''' Create 5 debug weeks in the past for testing purposes. '''
         for i in range(1, 6):
             past_date = datetime.now() - timedelta(weeks=i)
             past_iso = past_date.isocalendar()
 
-            rooms_copy = copy.deepcopy(self._config.get_rooms())
-            week = src.week.Week(past_iso.week, past_iso.year, rooms_copy)
-
-            monday = past_date - timedelta(days=past_date.weekday())
-            for room in week.rooms.values():
-                for task in room.tasks:
-                    if random.random() < 0.7:  # 70 % chance the task was completed
-                        done_day = monday + timedelta(days=random.randint(0, 6))
-                        task.doneBy = random.choice(users)
-                        task.doneWhen = done_day.replace(
-                            hour=random.randint(8, 20),
-                            minute=random.randint(0, 59),
-                            second=0,
-                            microsecond=0,
-                        )
+            monday = (past_date - timedelta(days=past_date.weekday())).date()
+            week = src.week.Week(past_iso.week, past_iso.year, self._config.get_rooms(), monday)
 
             key = (week.year, week.weekNumber)
             self._pastWeeks[key] = week
