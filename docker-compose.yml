@@ -1,0 +1,13 @@
+services:
+  Household_Task_Checklist:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: Household_Task_Checklist
+    restart: unless-stopped
+    # Uncomment and adjust if the app exposes a port:
+    # ports:
+    #   - "8080:8080"
+    # Uncomment to mount a local data directory:
+    # volumes:
+    #   - ./data:/app/data
