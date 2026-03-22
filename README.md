@@ -24,6 +24,12 @@ A web-based household task manager built with Flask. It organises cleaning and m
 
 ---
 
+## Screenshots
+
+![Website Preview](doc/Website.png)
+
+---
+
 ## Project Structure
 
 ```
