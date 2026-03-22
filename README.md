@@ -159,6 +159,87 @@ ports:
 
 The Docker image uses a **multi-stage build** (builder + slim runtime) and runs the application as a **non-root user** for security.
 
+### Option 3 — Raspberry Pi (systemd service)
+
+**Prerequisites:** Raspberry Pi OS (or any Debian-based Linux), Python 3.14
+
+This setup creates a systemd service that starts the application automatically on boot.
+
+```bash
+# Clone the repository (or copy files to your Pi)
+cd /home/pi
+git clone https://github.com/yourusername/Household_Task_Checklist.git
+cd Household_Task_Checklist
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r Requirements.txt
+deactivate
+```
+
+**Create a systemd service file:**
+
+```bash
+sudo nano /etc/systemd/system/household-tasks.service
+```
+
+Paste the following configuration (adjust paths and user if needed):
+
+```ini
+[Unit]
+Description=Household Task Checklist Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Household_Task_Checklist
+Environment="PATH=/home/pi/Household_Task_Checklist/.venv/bin"
+ExecStart=/home/pi/Household_Task_Checklist/.venv/bin/python app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Enable and start the service:**
+
+```bash
+# Reload systemd daemon
+sudo systemctl daemon-reload
+
+# Enable service to start on boot
+sudo systemctl enable household-tasks.service
+
+# Start the service now
+sudo systemctl start household-tasks.service
+
+# Check service status
+sudo systemctl status household-tasks.service
+```
+
+**Useful commands:**
+
+```bash
+# View logs
+sudo journalctl -u household-tasks.service -f
+
+# Restart the service
+sudo systemctl restart household-tasks.service
+
+# Stop the service
+sudo systemctl stop household-tasks.service
+
+# Disable auto-start
+sudo systemctl disable household-tasks.service
+```
+
+The app will be accessible at **http://<raspberry-pi-ip>:5000**. To find your Pi's IP address, run `hostname -I`.
+
 ---
 
 ## API Endpoints

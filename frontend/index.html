@@ -284,6 +284,8 @@
                         <button id="darkModeToggle" class="btn btn-outline-light btn-sm" title="Dark / Light Mode">🌙</button>
                         {% if prev_week_day %}
                         <a href="/day/{{ prev_week_day.year }}/{{ prev_week_day.month }}/{{ prev_week_day.day }}" class="btn btn-outline-light btn-sm">{{ t.nav_prev }}</a>
+                        {% else %}
+                        <button class="btn btn-outline-light btn-sm" disabled style="opacity:0.3; cursor:not-allowed;">{{ t.nav_prev }}</button>
                         {% endif %}
                         {% if next_week_day %}
                             {% if next_is_current_week %}

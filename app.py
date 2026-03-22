@@ -229,8 +229,12 @@ def create_app(scheduler):
         is_past_week = sunday < today
         
         # Find previous and next weeks (same weekday)
-        prev_week_day = target_date - timedelta(days=7)
+        prev_week_day_calc = target_date - timedelta(days=7)
         next_week_day = target_date + timedelta(days=7)
+        
+        # Check if we can navigate to previous week (week must exist in scheduler)
+        prev_week = scheduler.get_week_for_date(prev_week_day_calc)
+        prev_week_day = prev_week_day_calc if prev_week is not None else None
         
         # Check if we can navigate to next week
         next_week_monday = next_week_day - timedelta(days=next_week_day.weekday())
