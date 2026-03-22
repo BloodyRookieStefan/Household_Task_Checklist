@@ -21,6 +21,13 @@ def get_display_sets(current_day, all_past_days, ref_date):
     locked = set()
     overdue = set()
 
+    # Find the earliest date in the system (for tasks never completed)
+    earliest_date = ref
+    if all_past_days:
+        for past_day in all_past_days:
+            if past_day.date and past_day.date < earliest_date:
+                earliest_date = past_day.date
+    
     # Process tasks from current day
     for room_name, room in current_day.rooms.items():
         for task in room.tasks:
@@ -50,29 +57,33 @@ def get_display_sets(current_day, all_past_days, ref_date):
                             is_current_day = False
 
             if last_done is None:
-                continue  # never done → pending, no special styling
+                # Task never completed - check if it should be overdue
+                days_since_start = (ref - earliest_date).days
+                if days_since_start >= task.repeat * 2:
+                    overdue.add((room_name, task.name))
+                continue
 
             last_done_date = last_done.date() if hasattr(last_done, 'date') else last_done
             days_since = (ref - last_done_date).days
             
             # Day-based interval logic:
-            # - Within interval (days_since < repeat): locked or display_done
-            # - New interval started (repeat <= days_since < 2×repeat): unlocked (pending)
-            # - Not done in last interval (days_since >= 2×repeat): overdue
+            # - Within interval (days_since < repeat - 1): locked or display_done
+            # - New interval started (repeat - 1 <= days_since < 2×repeat - 1): unlocked (pending)
+            # - Not done in last interval (days_since >= 2×repeat - 1): overdue
             
             # Debug logging
             from src.setup.config import Config
             if Config().get_debug_mode():
                 print(f"[DEBUG] Task '{task.name}' in '{room_name}': days_since={days_since}, repeat={task.repeat}, is_current_day={is_current_day}, ref={ref}, last_done_date={last_done_date}")
             
-            if days_since < task.repeat:
+            if days_since < task.repeat - 1:
                 # If done on current day, always show as display_done
                 if is_current_day:
                     display_done.add((room_name, task.name))
                 else:
                     # Still within the interval, keep it locked
                     locked.add((room_name, task.name))
-            elif days_since >= task.repeat * 2:
+            elif days_since >= task.repeat * 2 - 1:
                 # At least one full interval has passed without completion → overdue
                 overdue.add((room_name, task.name))
             # else: task.repeat <= days_since < task.repeat * 2
@@ -292,7 +303,11 @@ def create_app(scheduler):
             return jsonify({"error": "Task not found"}), 404
 
         task.doneBy = done_by
-        task.doneWhen = datetime.now()
+        # In debug mode, use the day's date instead of current time
+        if scheduler.get_debug_mode():
+            task.doneWhen = datetime.combine(day_date, datetime.now().time())
+        else:
+            task.doneWhen = datetime.now()
 
         return jsonify({
             "success": True,
