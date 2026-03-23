@@ -10,8 +10,6 @@ class Scheduler:
         self._pastWeeks = dict()
         self._currentWeek = None
 
-        self.create_new_week()
-
         if self._config.get_debug_mode():
             self.create_debug_weeks()
     
@@ -19,8 +17,20 @@ class Scheduler:
         ''' Get the debug mode status. '''
         return self._config.get_debug_mode()
 
+    def _check_and_update_week(self) -> None:
+        ''' Check if the current week is still valid and create a new week if needed. '''
+        if self._currentWeek is None:
+            self.create_new_week()
+            return
+        
+        iso = datetime.now().isocalendar()
+        # If we're in a different week, create a new week
+        if iso.week != self._currentWeek.weekNumber or iso.year != self._currentWeek.year:
+            self.create_new_week()
+
     def get_current_week(self) -> src.week.Week:
         ''' Get the current week. '''
+        self._check_and_update_week()
         return self._currentWeek
     
     def get_past_week(self) -> dict:
@@ -40,6 +50,7 @@ class Scheduler:
     
     def get_day(self, target_date):
         """Get the Day object for a specific date."""
+        self._check_and_update_week()
         iso = target_date.isocalendar()
         
         # Check if the date is in the current week
@@ -57,6 +68,7 @@ class Scheduler:
         return None
     
     def get_week_for_date(self, target_date):
+        self._check_and_update_week()
         """Get the Week object for a specific date."""
         iso = target_date.isocalendar()
         
