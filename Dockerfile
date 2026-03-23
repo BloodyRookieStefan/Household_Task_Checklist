@@ -27,4 +27,4 @@ COPY . .
 USER appuser
 
 # Adjust this to your actual entry point (e.g. main.py, app.py)
-CMD ["python", "main.py"]
+CMD ["python", "app.py"]

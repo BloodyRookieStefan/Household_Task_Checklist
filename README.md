@@ -14,9 +14,10 @@ A web-based household task manager built with Flask. It organises cleaning and m
 
 - **Weekly task overview** — All tasks are grouped by room and displayed per calendar week (ISO week numbering).
 - **Task completion** — Mark individual tasks as done and assign them to a household member. The timestamp is recorded automatically.
+- **Persistent storage** — Task completions are stored in a SQLite database (`household_tasks.db`) and persist across restarts.
 - **Overdue detection** — A task is flagged as overdue when more than one full repeat cycle has passed without it being done (e.g. a 7-day task untouched for 2+ weeks).
 - **Locked tasks** — Tasks completed within their repeat window are shown as *Recently done* to prevent duplicate entries.
-- **History navigation** — Browse past weeks in read-only mode; up to 40 weeks are retained in memory.
+- **History navigation** — Browse past weeks and days on-demand. The database retains all historical data.
 - **Quick Actions** — Complete a recurring task (e.g. *Vacuum*) across all rooms in a single click.
 - **Progress tracking** — A progress bar and counter show how many tasks have been completed in the current week.
 - **Multilingual UI** — The interface supports English (`en`) and German (`de`), configurable per household.
@@ -37,6 +38,7 @@ Household_Task_Checklist/
 ├── app.py                  # Flask app factory, routes, overdue/locked logic
 ├── scheduler.py            # Week creation, history management, debug data
 ├── config.conf             # Main configuration file (users, rooms, tasks)
+├── household_tasks.db      # SQLite database (auto-created, stores completions)
 ├── Requirements.txt        # Python dependencies
 ├── Dockerfile              # Multi-stage Docker build
 ├── docker-compose.yml      # Compose configuration
@@ -45,6 +47,7 @@ Household_Task_Checklist/
 ├── setup/
 │   └── setup_venv.py       # Virtual environment setup helper
 └── src/
+    ├── database.py         # SQLite database handler
     ├── room.py             # Room model
     ├── task.py             # Task model
     ├── week.py             # Week model

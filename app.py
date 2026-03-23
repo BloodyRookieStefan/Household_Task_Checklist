@@ -4,10 +4,10 @@ from flask import Flask, jsonify, render_template, request
 
 from scheduler import Scheduler
 
-def get_display_sets(current_day, all_past_days, ref_date):
+def get_display_sets(current_day, scheduler, ref_date):
     """Return three sets of (room_name, task_name) tuples based on ref_date.
 
-    This function now works with a single day and checks all past days for task completions.
+    Uses the database to efficiently find the last completion for each task.
 
     - display_done : done on current_day
     - locked       : done on a past day and still within its repeat interval
@@ -21,49 +21,42 @@ def get_display_sets(current_day, all_past_days, ref_date):
     locked = set()
     overdue = set()
 
-    # Find the earliest date in the system (for tasks never completed)
-    earliest_date = ref
-    if all_past_days:
-        for past_day in all_past_days:
-            if past_day.date and past_day.date < earliest_date:
-                earliest_date = past_day.date
+    # Get the earliest date from database for overdue calculations
+    earliest_date, _ = scheduler._database.get_date_range()
+    if earliest_date is None:
+        earliest_date = ref
     
     # Process tasks from current day
     for room_name, room in current_day.rooms.items():
         for task in room.tasks:
-            last_done = None
             is_current_day = False
 
-            # Current day's completion — only if it happened on or before ref_date
+            # Check if task is completed on current day
             if task.doneBy and task.doneWhen:
                 done_date = task.doneWhen.date() if hasattr(task.doneWhen, 'date') else task.doneWhen
-                if done_date <= ref:
-                    last_done = task.doneWhen
+                if done_date == ref:
                     is_current_day = True
 
-            # Check all past days for this task
-            for past_day in all_past_days:
-                if past_day.date and past_day.date > ref:
-                    continue
-                past_room = past_day.rooms.get(room_name)
-                if not past_room:
-                    continue
-                past_task = next((t for t in past_room.tasks if t.name == task.name), None)
-                if past_task and past_task.doneWhen:
-                    past_done_date = past_task.doneWhen.date() if hasattr(past_task.doneWhen, 'date') else past_task.doneWhen
-                    if past_done_date <= ref:
-                        if last_done is None or past_task.doneWhen > last_done:
-                            last_done = past_task.doneWhen
-                            is_current_day = False
-
-            if last_done is None:
+            # Get last completion from database (on or before ref_date)
+            last_completion = scheduler.get_last_completion(room_name, task.name, ref)
+            
+            if last_completion is None and not is_current_day:
                 # Task never completed - check if it should be overdue
                 days_since_start = (ref - earliest_date).days
                 if days_since_start >= task.repeat * 2:
                     overdue.add((room_name, task.name))
                 continue
 
-            last_done_date = last_done.date() if hasattr(last_done, 'date') else last_done
+            # Determine the last done time
+            if is_current_day:
+                last_done = task.doneWhen
+                last_done_date = task.doneWhen.date() if hasattr(task.doneWhen, 'date') else task.doneWhen
+            elif last_completion:
+                last_done = last_completion['done_when']
+                last_done_date = last_completion['day_date']
+            else:
+                continue
+
             days_since = (ref - last_done_date).days
             
             # Day-based interval logic:
@@ -157,7 +150,7 @@ TRANSLATIONS = {
 
 
 def create_app(scheduler):
-    app = Flask(__name__, template_folder="frontend")
+    app = Flask(__name__, template_folder="frontend", static_folder="frontend")
 
     @app.after_request
     def add_header(response):
@@ -200,21 +193,8 @@ def create_app(scheduler):
         if week is None:
             return "Week not found", 404
         
-        # Collect all past days for interval calculations
-        all_past_days = []
-        past_weeks = scheduler.get_past_week()
-        for pw in past_weeks.values():
-            for day in pw.days:
-                if day.date and day.date < target_date:
-                    all_past_days.append(day)
-        
-        # Also include previous days from the same week (whether current or past)
-        for day in week.days:
-            if day.date and day.date < target_date:
-                all_past_days.append(day)
-        
-        # Calculate display sets
-        display_done, locked, overdue = get_display_sets(current_day, all_past_days, target_date)
+        # Calculate display sets using database
+        display_done, locked, overdue = get_display_sets(current_day, scheduler, target_date)
         
         users = scheduler._config.get_users()
         lang = scheduler._config.get_language_key().value
@@ -313,6 +293,14 @@ def create_app(scheduler):
         else:
             task.doneWhen = datetime.now()
 
+        # Save to database
+        success = scheduler.save_task_completion(
+            room_name, task_name, task.repeat, done_by, task.doneWhen, day_date
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to save to database"}), 500
+
         return jsonify({
             "success": True,
             "doneBy": task.doneBy,
@@ -348,6 +336,12 @@ def create_app(scheduler):
 
         task.doneBy = None
         task.doneWhen = None
+
+        # Delete from database
+        success = scheduler.delete_task_completion(room_name, task_name, day_date)
+        
+        if not success:
+            return jsonify({"error": "Failed to delete from database"}), 500
 
         return jsonify({"success": True})
 

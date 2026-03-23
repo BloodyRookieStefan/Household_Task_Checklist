@@ -4,5 +4,5 @@ from .task import Task
 @dataclass
 class Room:
     name: str
-    tasks: dict[Task]
+    tasks: list[Task]
 
