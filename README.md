@@ -245,6 +245,41 @@ The app will be accessible at **http://<raspberry-pi-ip>:5000**. To find your Pi
 
 ---
 
+## Data Persistence
+
+Task completions are stored in a **SQLite database** (`household_tasks.db`) located in the project root directory. The database is automatically created on first run.
+
+### Database Schema
+
+- **task_completions** — Stores all task completion records with:
+  - Room name, task name, task repeat interval
+  - Who completed the task and when
+  - The date the task was completed for
+  - Unique constraint per room/task/day to prevent duplicates
+
+### Backup & Migration
+
+To backup your data, simply copy the `household_tasks.db` file:
+
+```bash
+# Backup
+cp household_tasks.db household_tasks_backup_$(date +%Y%m%d).db
+
+# Restore
+cp household_tasks_backup_YYYYMMDD.db household_tasks.db
+```
+
+For Docker deployments, mount the database as a volume in `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+Then adjust the `DB_PATH` in [src/database.py](src/database.py) to use `/app/data/household_tasks.db`.
+
+---
+
 ## API Endpoints
 
 | Method | Route                    | Description                          |
